@@ -1,0 +1,28 @@
+---
+title: "COVID-19 time series"
+author: "Leo Bastos"
+date: "12/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Reading data
+
+```{r}
+library(tidyverse)
+
+data.dir <- "../COVID-19/csse_covid_19_data/csse_covid_19_daily_reports/"
+
+file.names <- dir(data.dir)
+
+test <- map(file.names, .f = function(x) read_csv(paste0(data.dir, x)))
+map( file.names, function(x) substr( x, start = 1, stop = nchar(x)-4))
+
+```
+
+
+## Time series of COVID-19
+

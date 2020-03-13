@@ -1,5 +1,8 @@
 # COVID-19
 
-Data analysis of COVID-19 using data provided by the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE).
+In this project I intent to analyse the COVID-19 data provided by the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE) focusing on South America, in particular in Brazil.
 
-The idea here is to perform a simple visual analysis and forecasting the number of cases 2 weeks ahead by country using a statistical model with an autoregressive term.
+I also prepared a version of "flatten the curve" in Portuguese using for sharing in social media. Fell free to use it and adapt it, the code for it is available at [here](https://github.com/lsbastos/COVID-19/blob/master/R/flatten_curve.R).
+
+![](flatten.png)
+

@@ -27,7 +27,7 @@ p2 <- p + xkcdaxis(xrange = c(0,8), yrange = c(0,1) ) +
            label = "Epidemia concentrada em um período", family="xkcd" ) +
   annotate("text", x = 6.75, y = 0.625, 
            label = "Epidemia espalhada no tempo", family="xkcd" ) +
-  labs(caption="Fonte: Leo Bastos (PROCC/Fiocruz)")
+  labs(caption="Fonte: Leo Bastos")
   
 p2
 

@@ -1,0 +1,544 @@
+---
+title: "Coronavirus COVID-19 Brazil Cases"
+output: 
+  flexdashboard::flex_dashboard:
+    css: styles.css
+    vertical_layout: scroll
+    orientation: rows
+    navbar:
+    - { title: "PROCC/Fiocruz", href: "http://www.procc.fiocruz.br/" }
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE, results='hide'}
+library(curl)
+library(DT)
+library(flexdashboard)
+library(ggplot2)
+library(ggrepel)
+library(leaflet)
+library(leafpop)
+library(plotly)
+library(tidyr)
+library(tidyverse)
+library(htmltools)
+library(sp)
+library(rgdal)
+library(data.table)
+library(shiny)
+```
+
+
+```{r, echo=FALSE, results='hide', cache=FALSE}
+
+# Reading data
+
+dconfirmed <- read.csv("https://raw.githubusercontent.com/wcota/covid19br/master/cases-brazil-cities-time.csv",sep=",",encoding = "UTF-8") %>% filter(!state == "TOTAL") %>% mutate(status = "Confirmed") 
+# %>% mutate(city = substr(city,1,nchar(as.character(city))-3))
+
+# ddeaths <- read.csv("")
+
+# drecovered <- read.csv("")
+
+# Remove rows where Value is empty
+if(length(which(dconfirmed$totalCases == ""))>0){
+  dconfirmed <- dconfirmed[-which(dconfirmed$totalCases == ""), ]
+}
+# if(length(which(ddeaths$Value == ""))>0){
+# ddeaths <- ddeaths[-which(ddeaths$Value == ""), ]
+# }
+# if(length(which(drecovered$Value == ""))>0){
+# drecovered <- drecovered[-which(drecovered$Value == ""), ]
+# }
+
+pop2019 <- read.csv("https://raw.githubusercontent.com/lbianchi/Infodengue/master/EstPopBrasil2019TCU.csv",sep=";",dec=",",encoding = "UTF-8") %>% mutate(MUNICIPIO = paste0(MUNICIPIO,"/",UF),
+         POPULACAO = as.numeric(POPULACAO),
+         LONG = as.numeric(LONG),
+         LAT = as.numeric(LAT))
+colnames(pop2019) <- c("state","cod.state","cod.city","city","pop","geocode","long","lat")
+dados <- dconfirmed %>% left_join(pop2019, by = "city") %>% mutate(state = state.x,Deaths = 0, Recovered = 0) %>% select(-c(state.x,state.y)) %>% group_by(city,date) %>% 
+  mutate(
+    casesper100k = totalCases/pop*100000,
+    newCasesper100k = newCases/pop*100000
+  ) %>% ungroup() %>% 
+  mutate(city = as.character(city)) %>% data.frame()
+```
+
+
+```{r, echo=FALSE, results='hide'}
+
+# ggplot time
+
+# id locations
+
+# selecting cities with 3 or more confirmed cases
+vecid <- dados %>% group_by(state,city) %>% summarise(n=n()) %>% 
+  filter(n>2) %>% ungroup() %>% select(city) 
+
+glist <- NULL
+for(i in 1:nrow(vecid)){
+  # d1 <- rbind(dconfirmed, ddeaths,drecovered)
+  # replace dconfirmed by d1 when ddeaths or drecovered become available
+  d1 <- dados[which(dados$city == vecid$city[i]), ]
+  
+  glist[[i]] <- ggplot() + 
+    geom_point(data = d1, aes(x = date, y = totalCases),stat = "identity",size = 5, colour = "#e02bbc") +
+    geom_line(data = d1, aes(x = date, y = totalCases,group = 1),size = 2, colour = "#e02bbc") +
+    geom_bar(data = d1,aes(x = date, y = newCases), stat = "identity", position = "dodge", fill = "#612be0") +
+    ggtitle(paste(as.character(vecid$city[i]), "\n \nConfirmados:", sum(d1$totalCases))) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 14,face = "bold"),
+          text = element_text(size = 12),
+          axis.title = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          panel.grid.minor = element_blank(),
+          legend.position = "bottom",
+          legend.title = element_blank(),
+          legend.text = element_blank(),
+          plot.margin = margin(0, 0, 0, 0, "cm"))
+}
+```
+
+
+```{r, echo=FALSE, results='hide'}
+
+# leaflet map dconfirmed, ddeaths, drecovered
+
+dados$color <- "b"
+dados$color[which(dados$totalCases > 100)] <- "a"
+pal <- colorFactor(palette = c("red", "orange"), domain = dados$color)
+
+l <- leaflet(dados) %>%
+  addTiles() %>%
+  addProviderTiles(providers$CartoDB.Positron, group = "Light") %>%
+  addProviderTiles(providers$CartoDB.DarkMatter, group = "Dark") %>%
+  addProviderTiles(providers$HERE.satelliteDay, group = "Satellite") %>%
+   addCircles(lng = ~long, lat = ~lat, radius = ~ totalCases*100, group = "pt", col = ~ pal(color), popup = ~paste0("<b>",city,":</b><br>",
+"<tr><td>Confirmed:</td><td align=`right`>", dados$totalCases, "</td></tr><br>",
+"<tr><td>New cases:</td><td align=`right`>", dados$newCases, "</td></tr><br>",
+"<tr><td>Deaths:</td><td align=`right`>", dados$Deaths, "</td></tr><br>",
+"<tr><td>Recovered:</td><td align=`right`>", dados$Recovered, "</td></tr>"
+)) %>%
+  #addPopupGraphs(glist, group = "pt", width = 400, height = 300) %>%
+  setView(lng = -56.0949, lat = -15.5989, zoom = 4) %>% 
+  addLayersControl(
+    baseGroups = c("Dark (default)", "Light", "Satellite"),
+    overlayGroups = c("Confirmed","New cases", "Deaths", "Recovered"),
+    options = layersControlOptions(collapsed = TRUE)
+  )%>%
+  hideGroup("Confirmed") %>%
+  hideGroup("New cases") %>%
+  hideGroup("Deaths") %>%
+  hideGroup("Recovered") %>%
+  addEasyButton(easyButton(
+    icon    = "glyphicon glyphicon-globe", title = "Reset zoom",
+    onClick = JS("function(btn, map){ map.setView([20, 0], 2); }"))) %>%
+  addEasyButton(easyButton(
+    icon    = "glyphicon glyphicon-map-marker", title = "Locate Me",
+    onClick = JS("function(btn, map){ map.locate({setView: true, maxZoom: 6}); }")))
+```
+
+
+```{r}
+
+# DT Table
+lastday <- sort(dados$date)[length(dados$date)]
+t <- dados %>% select(city,newCases,totalCases,Deaths,Recovered) %>% group_by(city) %>% summarise(
+  newCases = sum(newCases),
+  totalCases = sum(totalCases),
+  Deaths = sum(Deaths),
+  Recovered = sum(Recovered)
+) %>% arrange(desc(totalCases)) %>% data.frame()
+colnames(t) <- c("City", "New Cases", "Confirmed","Deaths", "Recovered")
+# t <- merge(dconfirmed[which(dconfirmed$date == lastday), ], ddeaths[which(ddeaths$date == lastday), ], by = "areaid")
+# t <- merge(t, drecoverd[which(drecoverd$date == lastday), ], by = "areaid")
+
+# t$confirmed <- t$cases.x
+# t$deaths <- t$cases.y
+# t$recovered <- t$cases
+
+# t <- t[rev(order(t$confirmed)), ]
+# t <- t[, c( "areaid", "confirmed", "deaths", "recovered")]
+# rownames(t) <- NULL
+# colnames(t) <- c("Country", "Confirmed", "Deaths", "Recovered")
+# rownames(t) <- NULL
+```
+
+
+```{r}
+
+# Time trends for each country with number of cases by number of days since 100th case
+# https://cran.rstudio.com/web/packages/ggrepel/vignettes/ggrepel.html
+# https://mran.microsoft.com/snapshot/2017-08-20/web/packages/ggrepel/vignettes/ggrepel.html
+
+fnCompareAreaid <- function(d1, vblexcompare, vbleycompare, yint, vecareaid, titulo){
+  
+  # Time trends
+  
+  # Select data for some countries
+  d1 <- d1[which(d1$city %in% veccity), ]
+  
+  g <- ggplot(d1[which(d1[, vblexcompare] >= 0), ], aes_string(x = vblexcompare, y = vbleycompare, group = "city", color = "city")) + 
+    geom_line(size = 0.8) +
+    geom_point(pch = 21, size = 1) +
+    geom_hline(yintercept = yint) +
+    geom_vline(xintercept = 0) +
+    #scale_y_log10() +
+    scale_y_log10(expand = expand_scale(add = c(0, 0.1)), breaks = c(10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000)) +
+    #scale_y_continuous(expand = expand_scale(add = c(0,100))) +
+    scale_x_continuous(expand = expand_scale(add = c(0, 1))) + # limit = c(0, 40)
+    theme_minimal() +
+    theme(panel.grid.minor = element_blank(), legend.position = "none", plot.margin = margin(3, 15, 3, 3, "mm")) +
+    #geom_shadowtext(aes(label = paste0(" ", areaname)), hjust = 0, vjust = 0, data = . %>% group_by(city) %>%
+    #                top_n(1, dayssince100), bg.color = "white") +
+    labs(x = "", y = "", title = titulo) +
+    coord_cartesian(clip = "off") +
+    geom_text_repel(data = do.call(rbind, lapply(split(d1, as.factor(d1$city)), function(x){return(x[which.max(x[, vbleycompare]),])})),
+                    aes(label = paste(" ", areaname)), size = 4, nudge_x = 1, segment.color = NA) # xlim = c(18, NA) 
+  return(g) 
+}
+```
+
+
+```{r}
+fnTimeTrendCases <- function(d1, vblexcompare, vbleycompare, ai, titulo){
+  # d1 = dados
+  # vblexcompare = "date"
+  # vbleycompare = "totalCases"
+  # ai = as.character(t$City[1])
+  # titulo = ""
+  # d1 <- rbind(dconfirmed, ddeaths, drecovered)
+  d1 <- d1[which(d1$city == ai), ]
+  
+  if(nrow(d1)<1){
+    return(print("There is no Covid-19 case for this city."))
+  }else{
+    numconfirmed <- d1[which(d1$date == sort(d1$date)[length(d1$date)]), "totalCases"]
+    # numdeaths    <- d1[which(d1$status == "Deaths"    & d1$date == sort(d1$date)[length(d1$date)]), "cases"]
+    # numrecovered <- d1[which(d1$status == "Recovered" & d1$date == sort(d1$date)[length(d1$date)]), "cases"]
+    
+    # vbleycompare is "date" vbleycompare is "newCases" or "totalCases"
+    if(vbleycompare=="totalCases"){
+    g <- ggplot() + 
+  geom_point(data = d1, aes(x = date, y = totalCases),stat = "identity",size = 1, colour = "#e02bbc") +
+  geom_line(data = d1, aes(x = date, y = totalCases,group = 1),size = 1, colour = "#e02bbc") +
+  geom_bar(data = d1,aes(x = date, y = newCases), stat = "identity", position = "dodge", fill = "#612be0") +
+  ggtitle(paste(as.character(ai), "\n \nConfirmated:", sum(d1$totalCases))) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14,face = "bold"),
+        text = element_text(size = 12),
+        axis.title = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"))
+    }else{
+      if(vbleycompare=="newCases"){
+        g <- ggplot() + 
+  geom_bar(data = d1,aes(x = date, y = newCases), stat = "identity", position = "dodge", fill = "#612be0") +
+  ggtitle(paste(as.character(ai), "\n \nNew cases:", sum(d1$newCases))) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14,face = "bold"),
+        text = element_text(size = 12),
+        axis.title = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"))
+        }else{
+        return(print("Argument invalid. Choose newCases or totalCases"))
+      }
+    }
+    g <- ggplotly(g)
+    return(g)
+    #g <- ggplotly(g) %>% layout(legend = list(orientation = 'h'),
+    #title = list(text = paste0(paste(unique(d1[d1$city == ai, "areaname"])),
+    #             '<br>', '<sup>', paste("Confirmed:", numconfirmed,  " Deaths:", numdeaths,  " Recovered:", numrecovered), '</sup>')))
+  }
+}
+```
+
+
+Map
+=====================================  
+
+
+Row
+-----------------------------------------------------------------------
+
+### Confirmed
+
+```{r}
+valueBox(value = sum(dados$newCases),
+         color = "#f5c147",
+         icon = "glyphicon-ok")
+```
+
+### Deaths
+
+```{r}
+valueBox(value = sum(dados$Deaths),
+         color = "#f5c147",
+         icon = "glyphicon-heart")
+```
+
+### New Cases
+
+
+```{r}
+#usar o dconfirmed pq o dados remove
+valueBox(value = sum(dados$newCases[which(dados$date==lastday)]),
+         color = "#f5c147",
+         icon = "glyphicon-ok-sign")
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### Click circles to see time trends {data-width=600}
+
+
+```{r}
+l
+```
+
+
+### Search and order {data-width=400}
+
+```{r}
+datatable(t, options = list(pageLength = 20))
+```
+
+
+States
+===================================== 
+
+Row
+-----------------------------------------------------------------------
+
+
+### Accumulated cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "totalCases",
+                 ai = as.character(t$City[1]),
+                 titulo = "")
+```
+
+### Accumulated cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "totalCases",
+                 ai = as.character(t$City[2]),
+                 titulo = "")
+```
+
+### Accumulated cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "totalCases",
+                 ai = as.character(t$City[3]),
+                 titulo = "")
+```
+
+### Accumulated cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "totalCases",
+                 ai = as.character(t$City[4]),
+                 titulo = "")
+```
+
+### Accumulated cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "totalCases",
+                 ai = as.character(t$City[5]),
+                 titulo = "")
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### New cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "newCases",
+                 ai = as.character(t$City[1]),
+                 titulo = "")
+```
+
+### New cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "newCases",
+                 ai = as.character(t$City[2]),
+                 titulo = "")
+```
+
+### New cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "newCases",
+                 ai = as.character(t$City[3]),
+                 titulo = "")
+```
+
+### New cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "newCases",
+                 ai = as.character(t$City[4]),
+                 titulo = "")
+```
+
+### New cases
+
+```{r}
+fnTimeTrendCases(dados,
+                 vblexcompare = "date",
+                 vbleycompare = "newCases",
+                 ai = as.character(t$City[5]),
+                 titulo = "")
+```
+
+
+
+```{r}
+#Comparison regions
+#===================================== 
+#Row
+#-----------------------------------------------------------------------
+### Number of confirmed cases by number of days since 100th case
+#fnCompareAreaid(d, "dayssince100", "cases", 100, diso3codesFew$areaid, paste0("Confirmed cases by number of days since ", 100 ,"th case"))
+```
+
+
+```{r}
+### Number of deaths by number of days since 10th case
+#fnCompareAreaid(dd, "dayssince10", "cases", 10, diso3codesFew$areaid, paste0("Deaths by number of days since ", 10 ,"th death"))
+```
+
+Cases adjusted for population
+===================================== 
+
+```{r}
+fnBarPlot <- function(d1, vbleplot, titulo){
+  d1 = d1 %>% arrange(city,desc(date)) %>% 
+    mutate(temp = 0)
+  
+  for(i in 2:nrow(d1)){
+    if(d1$city[i]==d1$city[i-1]){
+      d1$temp[i] <- 1
+    }else{
+      d1$temp[i] <- 0
+    }
+  }
+  d1 <- d1 %>% filter(temp==0) %>% select(-temp) %>% arrange(desc(totalCases))
+  d1 <- d1[1:10,] %>% data.frame()
+  
+  g <- ggplot(data = d1, aes_string(x = "city", y = vbleplot,
+                                    fill = vbleplot)) + 
+    geom_bar(stat = "identity", fill = "#612be0") +
+    theme_minimal() + labs(title = titulo,y = "Cases per 100k habs.") +
+    theme(axis.title.x = element_text(size = 10),
+          axis.text.x = element_blank(),
+          axis.title.y=element_blank(),
+          legend.position = "none",
+          legend.title = element_blank(),
+          legend.text=element_text(size = 10),
+          plot.margin = margin(0, 0, 0, 0, "cm")
+      )  + coord_flip(clip = "off")
+  
+  
+  return(g)
+}
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Confirmed cases per 100.000 habs (number of cases)
+
+```{r, out.width='100%'}
+fnBarPlot(dados, "casesper100k", "Confirmed cases per 100.000 habs. (number of cases)")
+```
+
+
+### Deaths per 100.000 habs (number of deaths)
+
+```{r}
+# fnBarPlot(d1[which(d1$status == "Deaths"), ], "casesper1m", "Deaths per one million population (number of deaths)")
+```
+
+
+Information  Last updated at `r sort(dados$date)[length(dados$date)]` 
+===================================== 
+
+**Author**
+
+Leo Bastos <br>
+Twitter: @leosbastos  
+Website: https://lsbastos.github.io
+
+Lucas Bianchi  
+Twitter: @lucasmbianchi_  
+Website: http://www.lucasbianchi.com/
+
+Paula Moraga  
+Twitter: @Paula_Moraga_  
+Website: http://www.paulamoraga.com/
+
+**Covid-19 Cases in Brazil**
+
+https://github.com/wcota/covid19br/blob/master/cases-brazil-cities-time.csv
+
+
+**Estimated population in 2019 in Brazil (TCU)**
+
+ftp://ftp.ibge.gov.br/Estimativas_de_Populacao/Estimativas_2019/
+
+
+**The R Project for Statistical Computing**
+
+https://www.r-project.org/
+
+
+
+**R packages**
+
+curl: https://cran.r-project.org/web/packages/curl/index.html  
+DT: https://rstudio.github.io/DT/  
+flexdashboard: https://rmarkdown.rstudio.com/flexdashboard/    
+ggplot2: https://ggplot2.tidyverse.org/  
+leaflet: https://rstudio.github.io/leaflet/  
+leafpop: https://github.com/r-spatial/leafpop
+
